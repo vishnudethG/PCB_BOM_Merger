@@ -1,10 +1,12 @@
 # src/ui/main_window.py
+import os
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
-                             QStackedWidget, QMessageBox)
+                             QStackedWidget, QMessageBox, QFileDialog)
 from src.ui.screens.screen_import import ImportScreen
 from src.ui.screens.screen_mapping import MappingScreen
 from src.ui.screens.screen_dashboard import DashboardScreen # <--- NEW
 from src.core.logic_engine import perform_merge_and_validation # <--- NEW
+from src.core.excel_writer import generate_production_files
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -72,6 +74,42 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(1)
 
     def perform_final_export(self, final_df):
-        print("Ready to export!")
-        # We will implement this in Iteration 4
-        QMessageBox.information(self, "Done", "Export function coming in next update!")
+        # 1. Ask user where to save
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, 
+            "Save Production File", 
+            "Production_Data.xlsx", 
+            "Excel Files (*.xlsx);;All Files (*)", 
+            options=options
+        )
+
+        if not file_path:
+            return # User cancelled
+
+        # Ensure .xlsx extension
+        if not file_path.lower().endswith('.xlsx'):
+            file_path += '.xlsx'
+
+        try:
+            # 2. Call the Writer Module
+            generate_production_files(final_df, file_path)
+
+            # 3. Success Message
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Information)
+            msg.setWindowTitle("Success")
+            msg.setText("File Generated Successfully!")
+            msg.setInformativeText(f"Saved to:\n{file_path}")
+            
+            # Add "Open Folder" button
+            btn_open = msg.addButton("Open Folder", QMessageBox.ActionRole)
+            msg.addButton(QMessageBox.Ok)
+            msg.exec_()
+
+            if msg.clickedButton() == btn_open:
+                folder = os.path.dirname(file_path)
+                os.startfile(folder) # Windows only command to open explorer
+
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Failed to write file:\n{str(e)}")

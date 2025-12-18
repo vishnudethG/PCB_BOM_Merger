@@ -1,4 +1,4 @@
-
+from src.core.config_manager import load_mapping_config, save_mapping_config
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QLabel, 
                              QComboBox, QPushButton, QGroupBox, QMessageBox, QHBoxLayout)
 from PyQt5.QtCore import pyqtSignal
@@ -26,16 +26,23 @@ class MappingScreen(QWidget):
         
         # Define the Fields we NEED
         self.required_fields = [
-            # (Field Name, Source File)
-            ("Reference Designator", "BOTH"),
+            # --- KEYS (Match these to the columns used for linking) ---
+            ("BOM Reference Col", "BOM"), 
+            ("XY Reference Col", "XY"),   
+            
+            # --- XY DATA (From Pick & Place File) ---
             ("Layer / Side", "XY"),
             ("Mid X", "XY"),
             ("Mid Y", "XY"),
             ("Rotation", "XY"),
+            
+            # --- BOM DATA (From Bill of Materials) ---
             ("Part Number", "BOM"),
             ("Value", "BOM"),
-            ("Footprint", "BOM"),
-            ("Description", "BOM")
+            ("Description", "BOM"),
+            ("Manufacturer", "BOM"), # <--- NEW FIELD
+            ("Qty", "BOM"),          # <--- NEW FIELD
+            ("Footprint", "BOM")     # Optional but recommended
         ]
 
         # Create Headers
@@ -51,8 +58,6 @@ class MappingScreen(QWidget):
             grid_layout.addWidget(lbl, row, 0)
             grid_layout.addWidget(combo, row, 1)
             
-            # Save reference to combo so we can read it later
-            # Key = "Part Number", Value = QComboBox Widget
             self.mapping_combos[field] = (combo, source)
 
         group = QGroupBox("Column Mapping")
@@ -75,27 +80,36 @@ class MappingScreen(QWidget):
         self.setLayout(layout)
 
     def populate_dropdowns(self, bom_cols, xy_cols):
-        """Called by MainWindow to fill the dropdowns with real file headers."""
         self.bom_columns = bom_cols
         self.xy_columns = xy_cols
+        
+        # LOAD SAVED CONFIG
+        saved_config = load_mapping_config()
 
         for field, (combo, source) in self.mapping_combos.items():
             combo.clear()
             combo.addItem("-- Select Column --")
             
-            if source == "BOM":
-                combo.addItems(self.bom_columns)
-                # Auto-select if name matches exactly (Simple AI)
-                self._auto_select(combo, field, self.bom_columns)
-            elif source == "XY":
-                combo.addItems(self.xy_columns)
-                self._auto_select(combo, field, self.xy_columns)
-            elif source == "BOTH":
-                # For Reference Des, we need it to match BOTH, but usually we map it to BOM 
-                # and assume XY has same name, or ask for both. 
-                # For simplicity, let's map it to BOM here.
-                combo.addItems(self.bom_columns)
-                self._auto_select(combo, field, self.bom_columns)
+            # 1. Decide which list to show
+            choices = []
+            if source == "BOM": choices = self.bom_columns
+            elif source == "XY": choices = self.xy_columns
+            
+            combo.addItems(choices)
+
+            # 2. SMART SELECTION LOGIC
+            # Priority A: Check if we have a saved mapping for this field (e.g. "Part Number" -> "Mfr_PN")
+            saved_col_name = saved_config.get(field)
+            
+            if saved_col_name and saved_col_name in choices:
+                # If the file actually has the column we saved last time, pick it!
+                index = combo.findText(saved_col_name)
+                if index >= 0:
+                    combo.setCurrentIndex(index)
+                    continue # Done, move to next field
+
+            # Priority B: If no save (or file changed), use fuzzy auto-select
+            self._auto_select(combo, field, choices)
 
     def _auto_select(self, combo, target, choices):
         """Helper to auto-select if 'Part Number' matches 'Part Number'"""
@@ -108,16 +122,15 @@ class MappingScreen(QWidget):
                 return
 
     def finalize_mapping(self):
-        """Gather all user selections and send to Main."""
         final_map = {}
         for field, (combo, source) in self.mapping_combos.items():
             selected = combo.currentText()
-            if selected == "-- Select Column --":
-                # Optional fields can be skipped, but required ones should warn.
-                # For now, we just pass None
-                final_map[field] = None
-            else:
+            if selected != "-- Select Column --":
                 final_map[field] = selected
+            else:
+                final_map[field] = None
         
-        # Emit the map
+        # SAVE CONFIG FOR NEXT TIME
+        save_mapping_config(final_map)
+        
         self.next_clicked.emit(final_map)

@@ -1,82 +1,66 @@
-
 import pandas as pd
+from src.core.normalizer import normalize_bom_data # <--- NEW IMPORT
 
 def perform_merge_and_validation(bom_df, xy_df, mapping):
-    """
-    Merges BOM and XY based on the mapped Reference Designator columns.
-    Returns: A unified DataFrame with a 'status' column (MATCHED, XY_ONLY, BOM_ONLY).
-    """
-    # 1. Identify Key Columns from Mapping
-    bom_ref_col = mapping.get("Reference Designator") # e.g. "Part Ref"
-    xy_ref_col = mapping.get("Reference Designator")  # e.g. "Designator" (Assuming user mapped same or we handle split)
-    
-    # Note: In our UI we had one "Reference Designator" mapping. 
-    # We assume the user selected the BOM column name.
-    # We need to find the equivalent in XY. Usually standardizing both works best.
-    
-    # Standardize Keys for Joining (Create temp columns)
-    # We assume 'Ref Des' is the normalized column in BOM from previous step
-    # We need to ensure we know the XY Ref column. 
-    # For this implementation, we will try to auto-detect the XY ref col if not explicitly separated in UI.
-    
-    # --- HELPER: Find XY Ref Column ---
-    # In Screen 2, if we mapped "Reference Designator" to a BOM column, 
-    # we need to find the matching XY column. 
-    # A robust app would have 2 dropdowns. 
-    # For now, let's look for the mapped name, OR standard "Ref", "Designator".
-    xy_key = None
-    if bom_ref_col in xy_df.columns:
-        xy_key = bom_ref_col
-    else:
-        # Fallback search
-        for c in xy_df.columns:
-            if "des" in c.lower() or "ref" in c.lower():
-                xy_key = c
-                break
-    
-    if not xy_key:
-        raise ValueError("Could not find Reference Designator column in XY file.")
+    print("\n---------------------------------------------------")
+    print(f"DEBUG MAPPING RECEIVED: {mapping}")
+    print("---------------------------------------------------\n")
 
-    # 2. Prepare Dataframes for Merge
-    # Standardize keys to Uppercase/Trimmed for the join
-    bom_df['_JOIN_KEY'] = bom_df[bom_ref_col].astype(str).str.strip().str.upper()
-    xy_df['_JOIN_KEY'] = xy_df[xy_key].astype(str).str.strip().str.upper()
+    # 1. Identify Key Columns
+    bom_ref_col = mapping.get("BOM Reference Col")
+    xy_ref_col = mapping.get("XY Reference Col")
+    
+    if not bom_ref_col: bom_ref_col = mapping.get("Reference Designator")
+    if not xy_ref_col: xy_ref_col = mapping.get("Reference Designator") 
 
-    # 3. Perform Outer Join
-    # indicator=True creates a '_merge' column: 'left_only', 'right_only', 'both'
-    # left = XY, right = BOM (We treat XY as the physical master)
-    merged_df = pd.merge(xy_df, bom_df, on='_JOIN_KEY', how='outer', indicator=True, suffixes=('_XY', '_BOM'))
+    if not bom_ref_col or bom_ref_col not in bom_df.columns:
+         raise ValueError(f"Mapping Error: BOM Reference Column '{bom_ref_col}' not found.")
+    if not xy_ref_col or xy_ref_col not in xy_df.columns:
+         raise ValueError(f"Mapping Error: XY Reference Column '{xy_ref_col}' not found.")
 
-    # 4. Process Results & Rename Columns based on Mapping
+    # 2. Normalize BOM
+    print(f"Normalizing BOM using column: {bom_ref_col}")
+    bom_df_exploded = normalize_bom_data(bom_df, bom_ref_col, delimiter=',') 
+
+    # 3. Prepare Merge Keys
+    bom_df_exploded['_JOIN_KEY'] = bom_df_exploded[bom_ref_col].astype(str).str.strip().str.upper()
+    xy_df['_JOIN_KEY'] = xy_df[xy_ref_col].astype(str).str.strip().str.upper()
+
+    # 4. Perform Outer Join
+    merged_df = pd.merge(xy_df, bom_df_exploded, on='_JOIN_KEY', how='outer', indicator=True, suffixes=('_XY', '_BOM'))
+
+    # 5. Process Results
     final_rows = []
     
     for _, row in merged_df.iterrows():
-        # Determine Status
         merge_status = row['_merge']
         status = "UNKNOWN"
         if merge_status == 'both': status = "MATCHED"
-        elif merge_status == 'left_only': status = "XY_ONLY"  # In XY, missing BOM
-        elif merge_status == 'right_only': status = "BOM_ONLY" # In BOM, missing XY
+        elif merge_status == 'left_only': status = "XY_ONLY"
+        elif merge_status == 'right_only': status = "BOM_ONLY"
         
-        # Build Unified Row
         new_row = {
             "Ref Des": row['_JOIN_KEY'],
             "Status": status,
-            "Is Ignored": False, # Default
-            # XY Data (Handle if missing)
+            "Is Ignored": False,
+            
+            # --- XY DATA ---
             "Layer": row.get(mapping.get("Layer / Side"), ""),
             "Mid X": row.get(mapping.get("Mid X"), ""),
             "Mid Y": row.get(mapping.get("Mid Y"), ""),
             "Rotation": row.get(mapping.get("Rotation"), ""),
-            # BOM Data (Handle if missing)
+            
+            # --- BOM DATA ---
             "Part Number": row.get(mapping.get("Part Number"), ""),
+            "Description": row.get(mapping.get("Description"), ""),
             "Value": row.get(mapping.get("Value"), ""),
             "Footprint": row.get(mapping.get("Footprint"), ""),
-            "Description": row.get(mapping.get("Description"), "")
+            "Manufacturer": row.get(mapping.get("Manufacturer"), ""), # <--- NEW
+            "Qty": row.get(mapping.get("Qty"), "")                    # <--- NEW
         }
         
-        # Auto-Ignore logic for Fiducials (Optional, can be expanded)
-        ref = new_row["Ref Des"]
+        # Auto-Ignore Logic
+        ref = str(new_row["Ref Des"])
         if ref.startswith("FID") or ref.startswith("TP") or ref.startswith("MH"):
             if status == "XY_ONLY":
                 new_row["Is Ignored"] = True

@@ -7,7 +7,6 @@ from PyQt5.QtCore import pyqtSignal, Qt
 
 # IMPORT YOUR BACKEND LOGIC
 from src.core.file_loader import load_and_clean_file
-from src.core.normalizer import normalize_bom_data
 
 class ImportScreen(QWidget):
     # Custom Signal to tell MainWindow "We are done here"
@@ -17,6 +16,7 @@ class ImportScreen(QWidget):
         super().__init__()
         self.bom_df = None   # To store loaded BOM data
         self.xy_df = None    # To store loaded XY data
+        self.selected_delimiter = ',' # Default delimiter
         self.init_ui()
 
     def init_ui(self):
@@ -76,6 +76,7 @@ class ImportScreen(QWidget):
         
         self.btn_next = QPushButton("Process & Next >>")
         self.btn_next.setEnabled(False) # Disabled until files are loaded
+        # THIS WAS THE MISSING METHOD IN YOUR ERROR
         self.btn_next.clicked.connect(self.process_and_continue)
         bottom_bar.addWidget(self.btn_next)
 
@@ -126,35 +127,20 @@ class ImportScreen(QWidget):
             self.btn_next.setEnabled(True)
 
     def process_and_continue(self):
-            # 1. Determine Delimiter
-            delimiter = ','
-            if self.rb_semi.isChecked(): delimiter = ';'
-            if self.rb_space.isChecked(): delimiter = ' '
+        """
+        Gathers settings and moves to the Mapping Screen.
+        We do NOT normalize here anymore; we pass the raw data and let Logic Engine do it properly.
+        """
+        # 1. Determine Delimiter
+        delimiter = ','
+        if self.rb_semi.isChecked(): delimiter = ';'
+        if self.rb_space.isChecked(): delimiter = ' '
+        
+        # Save it to instance so MainWindow can grab it
+        self.selected_delimiter = delimiter
 
-            # 2. Identify the Ref Des Column (Simplification: User selects or we auto-detect)
-            # For this Iteration, we assume the user confirms the column in the next step, 
-            # BUT for normalization to work, we need to know the Ref Des column NOW.
-            # Let's verify if we can find it automatically using your keyword list.
-            # (In a full app, you'd add a dropdown on Screen 1: "Which column is Ref Des?")
-            
-            # Simple Auto-detect for Ref Des column
-            possible_cols = [c for c in self.bom_df.columns if "ref" in c.lower() or "des" in c.lower()]
-            if not possible_cols:
-                QMessageBox.warning(self, "Error", "Could not auto-detect a 'Reference' column.\nPlease rename your BOM header to 'Ref Des'.")
-                return
-            
-            ref_col = possible_cols[0]
+        # 2. Prepare Data for Handoff (Pass RAW data)
+        self.clean_bom_df = self.bom_df 
 
-            try:
-                # 3. Normalize (Explode R1-R3)
-                # We import the normalizer function inside the method or at top
-                from src.core.normalizer import normalize_bom_data
-                
-                # Create a clean copy for the next stage
-                self.clean_bom_df = normalize_bom_data(self.bom_df, ref_col, delimiter)
-                
-                # 4. Emit Signal (We are ready to move)
-                self.next_clicked.emit()
-                
-            except Exception as e:
-                QMessageBox.critical(self, "Normalization Error", str(e))
+        # 3. Emit Signal
+        self.next_clicked.emit()
