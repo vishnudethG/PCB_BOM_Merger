@@ -1,5 +1,5 @@
 import pandas as pd
-from src.core.normalizer import normalize_bom_data # <--- NEW IMPORT
+from src.core.normalizer import normalize_bom_data
 
 def perform_merge_and_validation(bom_df, xy_df, mapping):
     print("\n---------------------------------------------------")
@@ -10,6 +10,7 @@ def perform_merge_and_validation(bom_df, xy_df, mapping):
     bom_ref_col = mapping.get("BOM Reference Col")
     xy_ref_col = mapping.get("XY Reference Col")
     
+    # Fallback for legacy configs
     if not bom_ref_col: bom_ref_col = mapping.get("Reference Designator")
     if not xy_ref_col: xy_ref_col = mapping.get("Reference Designator") 
 
@@ -39,6 +40,17 @@ def perform_merge_and_validation(bom_df, xy_df, mapping):
         elif merge_status == 'left_only': status = "XY_ONLY"
         elif merge_status == 'right_only': status = "BOM_ONLY"
         
+        # --- ROBUST DATA FETCHING ---
+        # 1. Try to get Description from the specific mapped column
+        desc = row.get(mapping.get("Description"), "")
+        
+        # 2. Fallback: If empty, look for auto-generated merge names
+        if pd.isna(desc) or str(desc).strip() == "":
+            if "Description_BOM" in row and pd.notna(row["Description_BOM"]):
+                desc = row["Description_BOM"]
+            elif "Description" in row and pd.notna(row["Description"]):
+                 desc = row["Description"]
+
         new_row = {
             "Ref Des": row['_JOIN_KEY'],
             "Status": status,
@@ -52,14 +64,14 @@ def perform_merge_and_validation(bom_df, xy_df, mapping):
             
             # --- BOM DATA ---
             "Part Number": row.get(mapping.get("Part Number"), ""),
-            "Description": row.get(mapping.get("Description"), ""),
+            "Description": str(desc).strip(),  # <--- FIXED: Uses the robust desc found above
             "Value": row.get(mapping.get("Value"), ""),
             "Footprint": row.get(mapping.get("Footprint"), ""),
-            "Manufacturer": row.get(mapping.get("Manufacturer"), ""), # <--- NEW
-            "Qty": row.get(mapping.get("Qty"), "")                    # <--- NEW
+            "Manufacturer": row.get(mapping.get("Manufacturer"), ""),
+            "Qty": row.get(mapping.get("Qty"), "")
         }
         
-        # Auto-Ignore Logic
+        # Auto-Ignore Logic for Test Points/Fiducials
         ref = str(new_row["Ref Des"])
         if ref.startswith("FID") or ref.startswith("TP") or ref.startswith("MH"):
             if status == "XY_ONLY":

@@ -1,17 +1,19 @@
-from src.core.config_manager import load_mapping_config, save_mapping_config
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QLabel, 
-                             QComboBox, QPushButton, QGroupBox, QMessageBox, QHBoxLayout)
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
+                             QLabel, QComboBox, QPushButton, QGroupBox, QMessageBox)
 from PyQt5.QtCore import pyqtSignal
 
+# Import Config Manager (Ensure you created this file from previous steps)
+from src.core.config_manager import load_mapping_config, save_mapping_config
+
 class MappingScreen(QWidget):
-    next_clicked = pyqtSignal(dict) # Signals the "Map" dictionary back to Main
+    next_clicked = pyqtSignal(dict)
     back_clicked = pyqtSignal()
 
     def __init__(self):
         super().__init__()
+        self.mapping_combos = {} # Stores {field: (combobox, source)}
         self.bom_columns = []
         self.xy_columns = []
-        self.mapping_combos = {} # Stores the dropdown widgets
         self.init_ui()
 
     def init_ui(self):
@@ -39,7 +41,7 @@ class MappingScreen(QWidget):
             # --- BOM DATA (From Bill of Materials) ---
             ("Part Number", "BOM"),
             ("Value", "BOM"),
-            ("Description", "BOM"),
+            ("Description", "BOM"),  # <--- CRITICAL: MUST SAY BOM
             ("Manufacturer", "BOM"), # <--- NEW FIELD
             ("Qty", "BOM"),          # <--- NEW FIELD
             ("Footprint", "BOM")     # Optional but recommended
@@ -98,39 +100,54 @@ class MappingScreen(QWidget):
             combo.addItems(choices)
 
             # 2. SMART SELECTION LOGIC
-            # Priority A: Check if we have a saved mapping for this field (e.g. "Part Number" -> "Mfr_PN")
+            # Priority A: Check if we have a saved mapping
             saved_col_name = saved_config.get(field)
-            
             if saved_col_name and saved_col_name in choices:
-                # If the file actually has the column we saved last time, pick it!
                 index = combo.findText(saved_col_name)
                 if index >= 0:
                     combo.setCurrentIndex(index)
-                    continue # Done, move to next field
+                    continue 
 
-            # Priority B: If no save (or file changed), use fuzzy auto-select
+            # Priority B: Auto-select based on name similarity
             self._auto_select(combo, field, choices)
 
-    def _auto_select(self, combo, target, choices):
-        """Helper to auto-select if 'Part Number' matches 'Part Number'"""
-        target_clean = target.lower().replace(" ", "")
-        for i, choice in enumerate(choices):
-            choice_clean = str(choice).lower().replace(" ", "").replace("_", "")
-            # Fuzzy match keywords
-            if target_clean in choice_clean or choice_clean in target_clean:
-                combo.setCurrentIndex(i + 1) # +1 because of "-- Select --"
+    def _auto_select(self, combo, target_field, choices):
+        """Helper to guess the correct column based on name."""
+        target_clean = target_field.lower().replace(" ", "").replace("_", "")
+        
+        for index, choice in enumerate(choices):
+            # Clean the choice (ignore case, spaces, underscores)
+            choice_clean = choice.lower().replace(" ", "").replace("_", "")
+            
+            # 1. Exact match (cleaned)
+            if target_clean == choice_clean:
+                combo.setCurrentIndex(index + 1) # +1 because of "-- Select --"
+                return
+            
+            # 2. Contains match (e.g. "PartNumber" in "Mfr_PartNumber")
+            # Be careful with short words like "X" or "Y"
+            if len(target_clean) > 2 and target_clean in choice_clean:
+                combo.setCurrentIndex(index + 1)
                 return
 
     def finalize_mapping(self):
         final_map = {}
+        missing_fields = []
+
         for field, (combo, source) in self.mapping_combos.items():
             selected = combo.currentText()
             if selected != "-- Select Column --":
                 final_map[field] = selected
             else:
                 final_map[field] = None
+                # Optional: Force user to select? For now, we allow empty.
         
-        # SAVE CONFIG FOR NEXT TIME
+        # Validate critical Keys
+        if not final_map.get("BOM Reference Col") or not final_map.get("XY Reference Col"):
+            QMessageBox.warning(self, "Missing Keys", "You MUST map the Reference Designator columns for both files.")
+            return
+
+        # SAVE CONFIG
         save_mapping_config(final_map)
         
         self.next_clicked.emit(final_map)
