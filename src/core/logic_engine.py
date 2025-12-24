@@ -1,86 +1,109 @@
-
 import pandas as pd
+from src.core.normalizer import normalize_bom_data
+import re
 
-def perform_merge_and_validation(bom_df, xy_df, mapping):
-    """
-    Merges BOM and XY based on the mapped Reference Designator columns.
-    Returns: A unified DataFrame with a 'status' column (MATCHED, XY_ONLY, BOM_ONLY).
-    """
-    # 1. Identify Key Columns from Mapping
-    bom_ref_col = mapping.get("Reference Designator") # e.g. "Part Ref"
-    xy_ref_col = mapping.get("Reference Designator")  # e.g. "Designator" (Assuming user mapped same or we handle split)
+def perform_merge_v2(bom_df, xy_df, mapping):
+    print("\n!!! EXECUTING V2.1 LOGIC ENGINE (SMART FOOTPRINT) !!!")
     
-    # Note: In our UI we had one "Reference Designator" mapping. 
-    # We assume the user selected the BOM column name.
-    # We need to find the equivalent in XY. Usually standardizing both works best.
+    # --- 1. KEY RETRIEVAL ---
+    bom_ref_col = mapping.get("BOM Reference Col")
+    xy_ref_col = mapping.get("XY Reference Col")
     
-    # Standardize Keys for Joining (Create temp columns)
-    # We assume 'Ref Des' is the normalized column in BOM from previous step
-    # We need to ensure we know the XY Ref column. 
-    # For this implementation, we will try to auto-detect the XY ref col if not explicitly separated in UI.
-    
-    # --- HELPER: Find XY Ref Column ---
-    # In Screen 2, if we mapped "Reference Designator" to a BOM column, 
-    # we need to find the matching XY column. 
-    # A robust app would have 2 dropdowns. 
-    # For now, let's look for the mapped name, OR standard "Ref", "Designator".
-    xy_key = None
-    if bom_ref_col in xy_df.columns:
-        xy_key = bom_ref_col
-    else:
-        # Fallback search
-        for c in xy_df.columns:
-            if "des" in c.lower() or "ref" in c.lower():
-                xy_key = c
-                break
-    
-    if not xy_key:
-        raise ValueError("Could not find Reference Designator column in XY file.")
+    if not bom_ref_col or not xy_ref_col:
+         raise ValueError("Mapping Error: Reference Columns missing.")
 
-    # 2. Prepare Dataframes for Merge
-    # Standardize keys to Uppercase/Trimmed for the join
-    bom_df['_JOIN_KEY'] = bom_df[bom_ref_col].astype(str).str.strip().str.upper()
-    xy_df['_JOIN_KEY'] = xy_df[xy_key].astype(str).str.strip().str.upper()
+    # Get Column Names
+    ref_x_col = mapping.get("Ref X") or mapping.get("Mid X")
+    ref_y_col = mapping.get("Ref Y") or mapping.get("Mid Y")
+    rot_col = mapping.get("Rotation")
+    
+    # Detect if we can grab footprint from XY as a backup
+    # (We assume the column name is 'Footprint' in XY if not explicitly mapped)
+    xy_footprint_col = None
+    for col in xy_df.columns:
+        if "footprint" in col.lower():
+            xy_footprint_col = col
+            break
 
-    # 3. Perform Outer Join
-    # indicator=True creates a '_merge' column: 'left_only', 'right_only', 'both'
-    # left = XY, right = BOM (We treat XY as the physical master)
-    merged_df = pd.merge(xy_df, bom_df, on='_JOIN_KEY', how='outer', indicator=True, suffixes=('_XY', '_BOM'))
+    # --- 2. CLEAN UNITS FROM XY DATA ---
+    if ref_x_col and ref_x_col in xy_df.columns:
+        xy_df[ref_x_col] = _clean_numeric_col(xy_df[ref_x_col])
+    if ref_y_col and ref_y_col in xy_df.columns:
+        xy_df[ref_y_col] = _clean_numeric_col(xy_df[ref_y_col])
+    if rot_col and rot_col in xy_df.columns:
+        xy_df[rot_col] = _clean_numeric_col(xy_df[rot_col])
 
-    # 4. Process Results & Rename Columns based on Mapping
+    # --- 3. PRE-PROCESS XY (PANEL LOGIC) ---
+    print("Resolving Panels...")
+    xy_clean = _resolve_panels_v2(xy_df, xy_ref_col, ref_y_col)
+
+    # --- 4. PRE-PROCESS BOM ---
+    print(f"Normalizing BOM...")
+    bom_exploded = normalize_bom_data(bom_df, bom_ref_col, delimiter=',') 
+
+    # --- 5. MERGE ---
+    bom_exploded['_JOIN_KEY'] = bom_exploded[bom_ref_col].astype(str).str.strip().str.upper()
+    xy_clean['_JOIN_KEY'] = xy_clean[xy_ref_col].astype(str).str.strip().str.upper()
+
+    merged_df = pd.merge(xy_clean, bom_exploded, on='_JOIN_KEY', how='outer', indicator=True, suffixes=('_XY', '_BOM'))
+
+    # --- 6. BUILD OUTPUT ---
     final_rows = []
     
     for _, row in merged_df.iterrows():
-        # Determine Status
         merge_status = row['_merge']
-        status = "UNKNOWN"
-        if merge_status == 'both': status = "MATCHED"
-        elif merge_status == 'left_only': status = "XY_ONLY"  # In XY, missing BOM
-        elif merge_status == 'right_only': status = "BOM_ONLY" # In BOM, missing XY
+        status = "MATCHED" if merge_status == 'both' else ("XY_ONLY" if merge_status == 'left_only' else "BOM_ONLY")
         
-        # Build Unified Row
+        # --- SMART FOOTPRINT FETCH ---
+        # 1. Try BOM Mapping
+        footprint = row.get(mapping.get("Footprint"), "")
+        
+        # 2. If BOM is empty, try XY Mapping or Auto-Detected XY Column
+        if pd.isna(footprint) or str(footprint).strip() == "":
+            # Try to get it from the XY side of the merge
+            if xy_footprint_col and xy_footprint_col in row:
+                footprint = row[xy_footprint_col]
+            # Or check if it was suffixed during merge
+            elif xy_footprint_col and f"{xy_footprint_col}_XY" in row:
+                 footprint = row[f"{xy_footprint_col}_XY"]
+
         new_row = {
             "Ref Des": row['_JOIN_KEY'],
             "Status": status,
-            "Is Ignored": False, # Default
-            # XY Data (Handle if missing)
-            "Layer": row.get(mapping.get("Layer / Side"), ""),
-            "Mid X": row.get(mapping.get("Mid X"), ""),
-            "Mid Y": row.get(mapping.get("Mid Y"), ""),
-            "Rotation": row.get(mapping.get("Rotation"), ""),
-            # BOM Data (Handle if missing)
-            "Part Number": row.get(mapping.get("Part Number"), ""),
-            "Value": row.get(mapping.get("Value"), ""),
-            "Footprint": row.get(mapping.get("Footprint"), ""),
-            "Description": row.get(mapping.get("Description"), "")
+            "Is Ignored": False,
+            "Layer": row.get(mapping.get("Layer") or mapping.get("Layer / Side"), ""),
+            "Ref X": row.get(ref_x_col, ""),
+            "Ref Y": row.get(ref_y_col, ""),
+            "Rotation": row.get(rot_col, ""),
+            "Part number": row.get(mapping.get("Part number") or mapping.get("Part Number"), ""),
+            "VALUE": row.get(mapping.get("VALUE") or mapping.get("Value"), ""),
+            "Footprint": str(footprint).strip(), # Uses the smart fallback result
+            "Quantity": row.get(mapping.get("Quantity") or mapping.get("Qty"), ""),
+            "Remark": str(row.get(mapping.get("Remark"), "")).strip()
         }
         
-        # Auto-Ignore logic for Fiducials (Optional, can be expanded)
-        ref = new_row["Ref Des"]
-        if ref.startswith("FID") or ref.startswith("TP") or ref.startswith("MH"):
-            if status == "XY_ONLY":
-                new_row["Is Ignored"] = True
+        # Auto-Ignore
+        ref = str(new_row["Ref Des"])
+        if (ref.startswith("FID") or ref.startswith("TP") or ref.startswith("MH")) and status == "XY_ONLY":
+            new_row["Is Ignored"] = True
                 
         final_rows.append(new_row)
 
     return pd.DataFrame(final_rows)
+
+def _clean_numeric_col(series):
+    return series.astype(str).apply(
+        lambda x: re.sub(r"[^\d\.\-]", "", x) if pd.notnull(x) else x
+    )
+
+def _resolve_panels_v2(xy_df, ref_col_name, y_col_name):
+    if not y_col_name or y_col_name not in xy_df.columns:
+        return xy_df
+
+    temp_y = "__TEMP_Y"
+    xy_df[temp_y] = pd.to_numeric(xy_df[y_col_name], errors='coerce')
+    
+    xy_sorted = xy_df.sort_values(by=temp_y, ascending=True)
+    xy_deduped = xy_sorted.drop_duplicates(subset=ref_col_name, keep='first')
+    
+    return xy_deduped.drop(columns=[temp_y])

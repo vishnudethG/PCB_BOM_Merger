@@ -1,160 +1,110 @@
-# src/ui/screens/screen_dashboard.py
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
-                             QTableWidgetItem, QLabel, QPushButton, QTabWidget, 
-                             QHeaderView, QMessageBox, QCheckBox, QFrame)
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QColor
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
+                             QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox)
+from PyQt5.QtCore import pyqtSignal, Qt
 
 class DashboardScreen(QWidget):
     back_clicked = pyqtSignal()
-    export_clicked = pyqtSignal(object) # Passes the final DataFrame
+    export_clicked = pyqtSignal(object) # Carries the dataframe
 
     def __init__(self):
         super().__init__()
-        self.master_df = None
+        self.df = None
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout()
         
-        # --- TOP SUMMARY BAR ---
-        summary_layout = QHBoxLayout()
-        self.lbl_matched = self._create_stat_box("Matched", "0", "#D4EDDA", "#155724") # Green
-        self.lbl_xy_err = self._create_stat_box("XY Errors (Critical)", "0", "#F8D7DA", "#721C24") # Red
-        self.lbl_bom_warn = self._create_stat_box("BOM Warnings", "0", "#FFF3CD", "#856404") # Yellow
-        
-        summary_layout.addWidget(self.lbl_matched)
-        summary_layout.addWidget(self.lbl_xy_err)
-        summary_layout.addWidget(self.lbl_bom_warn)
-        layout.addLayout(summary_layout)
+        # --- TITLE ---
+        lbl_title = QLabel("Step 3: Processing Complete")
+        lbl_title.setStyleSheet("font-size: 18px; font-weight: bold; color: #27ae60;")
+        layout.addWidget(lbl_title)
 
-        # --- TABS ---
-        self.tabs = QTabWidget()
+        # --- STATS ROW ---
+        stats_layout = QHBoxLayout()
         
-        # Tab 1: XY Errors (Critical)
-        self.tab_xy = QWidget()
-        self.table_xy = self._create_table(["Ref Des", "Layer", "X", "Y", "Action"])
-        xy_layout = QVBoxLayout(self.tab_xy)
-        xy_layout.addWidget(self.table_xy)
-        self.tabs.addTab(self.tab_xy, "XY Errors (Missing Parts)")
+        self.card_total = self._create_stat_card("Total Rows", "0")
+        self.card_matched = self._create_stat_card("Matched", "0", "#27ae60")
+        self.card_xy_only = self._create_stat_card("XY Only (DNP)", "0", "#f39c12")
+        self.card_bom_only = self._create_stat_card("BOM Only (Missing)", "0", "#c0392b")
         
-        # Tab 2: BOM Warnings
-        self.tab_bom = QWidget()
-        self.table_bom = self._create_table(["Ref Des", "Part Number", "Description", "Action"])
-        bom_layout = QVBoxLayout(self.tab_bom)
-        bom_layout.addWidget(self.table_bom)
-        self.tabs.addTab(self.tab_bom, "BOM Only (No Location)")
+        stats_layout.addWidget(self.card_total)
+        stats_layout.addWidget(self.card_matched)
+        stats_layout.addWidget(self.card_xy_only)
+        stats_layout.addWidget(self.card_bom_only)
+        layout.addLayout(stats_layout)
 
-        # Tab 3: Matched
-        self.tab_match = QWidget()
-        self.table_match = self._create_table(["Ref Des", "Layer", "X", "Y", "Part Number", "Rotation"])
-        match_layout = QVBoxLayout(self.tab_match)
-        match_layout.addWidget(self.table_match)
-        self.tabs.addTab(self.tab_match, "Matched Data")
-
-        layout.addWidget(self.tabs)
+        # --- PREVIEW TABLE ---
+        self.table = QTableWidget()
+        layout.addWidget(QLabel("Preview Data (First 100 Rows):"))
+        layout.addWidget(self.table)
 
         # --- BOTTOM BAR ---
-        nav_layout = QHBoxLayout()
-        btn_back = QPushButton("<< Back")
+        btn_layout = QHBoxLayout()
+        btn_back = QPushButton("<< Adjust Mapping")
         btn_back.clicked.connect(self.back_clicked.emit)
         
-        self.btn_export = QPushButton("GENERATE EXCEL >>")
-        self.btn_export.setStyleSheet("font-weight: bold; padding: 10px;")
-        self.btn_export.clicked.connect(self.on_export)
+        self.btn_export = QPushButton("Generate Excel Files >>")
+        self.btn_export.setStyleSheet("background-color: #2980b9; color: white; font-weight: bold; padding: 10px;")
+        self.btn_export.clicked.connect(lambda: self.export_clicked.emit(self.df))
         
-        nav_layout.addWidget(btn_back)
-        nav_layout.addStretch()
-        nav_layout.addWidget(self.btn_export)
+        btn_layout.addWidget(btn_back)
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.btn_export)
         
-        layout.addLayout(nav_layout)
+        layout.addLayout(btn_layout)
         self.setLayout(layout)
 
-    def _create_stat_box(self, title, count, bg_color, text_color):
-        lbl = QLabel(f"{title}: {count}")
-        lbl.setStyleSheet(f"background-color: {bg_color}; color: {text_color}; border: 1px solid {text_color}; padding: 10px; font-weight: bold; border-radius: 4px;")
-        lbl.setAlignment(Qt.AlignCenter)
-        return lbl
-
-    def _create_table(self, columns):
-        table = QTableWidget()
-        table.setColumnCount(len(columns))
-        table.setHorizontalHeaderLabels(columns)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        return table
+    def _create_stat_card(self, title, value, color="#333"):
+        group = QGroupBox()
+        layout = QVBoxLayout()
+        lbl_val = QLabel(value)
+        lbl_val.setStyleSheet(f"font-size: 24px; font-weight: bold; color: {color};")
+        lbl_val.setAlignment(Qt.AlignCenter)
+        
+        lbl_title = QLabel(title)
+        lbl_title.setAlignment(Qt.AlignCenter)
+        
+        layout.addWidget(lbl_val)
+        layout.addWidget(lbl_title)
+        group.setLayout(layout)
+        return group
 
     def set_data(self, df):
-        """Called by Main Window to load data."""
-        self.master_df = df
-        self.refresh_views()
-
-    def refresh_views(self):
-        """Filters master_df and repopulates tables."""
-        if self.master_df is None: return
-
-        # Buckets
-        matched = self.master_df[self.master_df["Status"] == "MATCHED"]
-        xy_err = self.master_df[(self.master_df["Status"] == "XY_ONLY") & (self.master_df["Is Ignored"] == False)]
-        bom_warn = self.master_df[self.master_df["Status"] == "BOM_ONLY"]
+        self.df = df
         
-        # Update Stats
-        self.lbl_matched.setText(f"Matched: {len(matched)}")
-        self.lbl_xy_err.setText(f"XY Errors: {len(xy_err)}")
-        self.lbl_bom_warn.setText(f"BOM Warnings: {len(bom_warn)}")
+        # 1. Update Stats
+        total = len(df)
+        matched = len(df[df['Status'] == 'MATCHED'])
+        xy_only = len(df[df['Status'] == 'XY_ONLY'])
+        bom_only = len(df[df['Status'] == 'BOM_ONLY'])
+        
+        self.card_total.findChild(QLabel).setText(str(total)) # First label is value due to layout order? No, tricky.
+        # Safer way to update text:
+        self._update_card_value(self.card_total, total)
+        self._update_card_value(self.card_matched, matched)
+        self._update_card_value(self.card_xy_only, xy_only)
+        self._update_card_value(self.card_bom_only, bom_only)
 
-        # Update Export Button Logic
-        if len(xy_err) > 0:
-            self.btn_export.setEnabled(False)
-            self.btn_export.setText(f"Fix {len(xy_err)} Critical Errors to Export")
-        else:
-            self.btn_export.setEnabled(True)
-            self.btn_export.setText("GENERATE EXCEL >>")
+        # 2. Populate Table
+        # Columns to show: Ref Des, Status, Layer, Ref X, Ref Y, Part Number
+        cols_to_show = ["Ref Des", "Status", "Layer", "Ref X", "Ref Y", "Part number"]
+        # Handle case where column might be missing (e.g. if logic engine failed partially)
+        safe_cols = [c for c in cols_to_show if c in df.columns]
+        
+        self.table.clear()
+        self.table.setColumnCount(len(safe_cols))
+        self.table.setRowCount(min(100, len(df)))
+        self.table.setHorizontalHeaderLabels(safe_cols)
+        
+        for r in range(self.table.rowCount()):
+            for c, col_name in enumerate(safe_cols):
+                val = str(df.iloc[r][col_name])
+                self.table.setItem(r, c, QTableWidgetItem(val))
+                
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
-        # Populate Tables
-        self._populate_xy_table(xy_err)
-        self._populate_bom_table(bom_warn)
-        self._populate_match_table(matched)
-
-    def _populate_xy_table(self, df):
-        self.table_xy.setRowCount(len(df))
-        for r, (idx, row) in enumerate(df.iterrows()):
-            self.table_xy.setItem(r, 0, QTableWidgetItem(str(row["Ref Des"])))
-            self.table_xy.setItem(r, 1, QTableWidgetItem(str(row["Layer"])))
-            self.table_xy.setItem(r, 2, QTableWidgetItem(str(row["Mid X"])))
-            self.table_xy.setItem(r, 3, QTableWidgetItem(str(row["Mid Y"])))
-            
-            # Action Button (Ignore)
-            btn_ignore = QPushButton("Ignore / DNI")
-            btn_ignore.clicked.connect(lambda _, x=idx: self.mark_ignore(x))
-            self.table_xy.setCellWidget(r, 4, btn_ignore)
-
-    def _populate_bom_table(self, df):
-        self.table_bom.setRowCount(len(df))
-        for r, (idx, row) in enumerate(df.iterrows()):
-            self.table_bom.setItem(r, 0, QTableWidgetItem(str(row["Ref Des"])))
-            self.table_bom.setItem(r, 1, QTableWidgetItem(str(row["Part Number"])))
-            self.table_bom.setItem(r, 2, QTableWidgetItem(str(row["Description"])))
-            
-            # Action Button (Placeholder)
-            self.table_bom.setItem(r, 3, QTableWidgetItem("Wait for v1.1"))
-
-    def _populate_match_table(self, df):
-        self.table_match.setRowCount(len(df))
-        # Limit matched view for performance if needed
-        limit_df = df.head(100) 
-        self.table_match.setRowCount(len(limit_df))
-        for r, (idx, row) in enumerate(limit_df.iterrows()):
-            self.table_match.setItem(r, 0, QTableWidgetItem(str(row["Ref Des"])))
-            self.table_match.setItem(r, 1, QTableWidgetItem(str(row["Layer"])))
-            self.table_match.setItem(r, 2, QTableWidgetItem(str(row["Mid X"])))
-            self.table_match.setItem(r, 3, QTableWidgetItem(str(row["Mid Y"])))
-            self.table_match.setItem(r, 4, QTableWidgetItem(str(row["Part Number"])))
-            self.table_match.setItem(r, 5, QTableWidgetItem(str(row["Rotation"])))
-
-    def mark_ignore(self, index):
-        """Update DataFrame to ignore this item."""
-        self.master_df.at[index, "Is Ignored"] = True
-        self.refresh_views()
-
-    def on_export(self):
-        self.export_clicked.emit(self.master_df)
+    def _update_card_value(self, group_box, value):
+        # The first label added to the layout is the Value label
+        layout = group_box.layout()
+        if layout.count() > 0:
+            layout.itemAt(0).widget().setText(str(value))

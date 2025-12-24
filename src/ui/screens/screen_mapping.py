@@ -1,70 +1,98 @@
-
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QLabel, 
-                             QComboBox, QPushButton, QGroupBox, QMessageBox, QHBoxLayout)
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
+                             QLabel, QComboBox, QPushButton, QGroupBox, QMessageBox)
 from PyQt5.QtCore import pyqtSignal
 
+# Safely import config manager
+try:
+    from src.core.config_manager import load_mapping_config, save_mapping_config
+except ImportError:
+    def load_mapping_config(): return {}
+    def save_mapping_config(data): pass
+
 class MappingScreen(QWidget):
-    next_clicked = pyqtSignal(dict) # Signals the "Map" dictionary back to Main
+    next_clicked = pyqtSignal(dict)
     back_clicked = pyqtSignal()
 
     def __init__(self):
         super().__init__()
+        self.mapping_combos = {} 
         self.bom_columns = []
         self.xy_columns = []
-        self.mapping_combos = {} # Stores the dropdown widgets
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout()
         
-        instruction = QLabel("Step 2: Map your File Columns to the Required Fields")
-        instruction.setStyleSheet("font-weight: bold; font-size: 14px;")
-        layout.addWidget(instruction)
+        instruction_box = QGroupBox("Step 2: Map Columns")
+        inst_layout = QVBoxLayout()
+        inst_label = QLabel("Map the file columns to your new requirements.")
+        inst_layout.addWidget(inst_label)
+        instruction_box.setLayout(inst_layout)
+        layout.addWidget(instruction_box)
 
         # --- MAPPING GRID ---
+        grid_widget = QWidget()
         grid_layout = QGridLayout()
+        grid_layout.setSpacing(10)
         
-        # Define the Fields we NEED
+        # --- NEW FIELD REQUIREMENTS ---
         self.required_fields = [
-            # (Field Name, Source File)
-            ("Reference Designator", "BOTH"),
-            ("Layer / Side", "XY"),
-            ("Mid X", "XY"),
-            ("Mid Y", "XY"),
+            # --- LINKING KEYS ---
+            ("BOM Reference Col", "BOM"), 
+            ("XY Reference Col", "XY"),   
+            
+            # --- XY DATA ---
+            ("Layer", "XY"),       # Was "Layer / Side"
+            ("Ref X", "XY"),       # Was "Mid X"
+            ("Ref Y", "XY"),       # Was "Mid Y"
             ("Rotation", "XY"),
-            ("Part Number", "BOM"),
-            ("Value", "BOM"),
+            
+            # --- BOM DATA ---
+            ("Part number", "BOM"),
+            ("VALUE", "BOM"),
             ("Footprint", "BOM"),
-            ("Description", "BOM")
+            ("Quantity", "BOM"),
+            ("Remark", "BOM")      # New Field
         ]
 
-        # Create Headers
+        # Headers
         grid_layout.addWidget(QLabel("<b>Target Field</b>"), 0, 0)
-        grid_layout.addWidget(QLabel("<b>Source Column</b>"), 0, 1)
+        grid_layout.addWidget(QLabel("<b>Source File</b>"), 0, 1)
+        grid_layout.addWidget(QLabel("<b>Select Column</b>"), 0, 2)
 
-        # Create Rows dynamically
+        # Generate Rows
         for idx, (field, source) in enumerate(self.required_fields):
             row = idx + 1
-            lbl = QLabel(f"{field} ({source})")
+            
+            # Label
+            lbl_field = QLabel(field)
+            if "Reference" in field: lbl_field.setStyleSheet("font-weight: bold;")
+            
+            # Badge
+            lbl_source = QLabel(source)
+            color = "#2c3e50" if source == "BOM" else "#c0392b"
+            lbl_source.setStyleSheet(f"color: white; background-color: {color}; padding: 2px 6px; border-radius: 4px;")
+            lbl_source.setFixedWidth(50)
+
+            # Dropdown
             combo = QComboBox()
             
-            grid_layout.addWidget(lbl, row, 0)
-            grid_layout.addWidget(combo, row, 1)
+            grid_layout.addWidget(lbl_field, row, 0)
+            grid_layout.addWidget(lbl_source, row, 1)
+            grid_layout.addWidget(combo, row, 2)
             
-            # Save reference to combo so we can read it later
-            # Key = "Part Number", Value = QComboBox Widget
             self.mapping_combos[field] = (combo, source)
 
-        group = QGroupBox("Column Mapping")
-        group.setLayout(grid_layout)
-        layout.addWidget(group)
+        grid_widget.setLayout(grid_layout)
+        layout.addWidget(grid_widget)
 
         # --- NAVIGATION ---
         nav_layout = QHBoxLayout()
         btn_back = QPushButton("<< Back")
         btn_back.clicked.connect(self.back_clicked.emit)
         
-        btn_next = QPushButton("Validate & Merge >>")
+        btn_next = QPushButton("Validate & Process >>")
+        btn_next.setStyleSheet("font-weight: bold; padding: 6px;")
         btn_next.clicked.connect(self.finalize_mapping)
         
         nav_layout.addWidget(btn_back)
@@ -75,49 +103,50 @@ class MappingScreen(QWidget):
         self.setLayout(layout)
 
     def populate_dropdowns(self, bom_cols, xy_cols):
-        """Called by MainWindow to fill the dropdowns with real file headers."""
         self.bom_columns = bom_cols
         self.xy_columns = xy_cols
+        saved_config = load_mapping_config()
 
         for field, (combo, source) in self.mapping_combos.items():
             combo.clear()
             combo.addItem("-- Select Column --")
-            
-            if source == "BOM":
-                combo.addItems(self.bom_columns)
-                # Auto-select if name matches exactly (Simple AI)
-                self._auto_select(combo, field, self.bom_columns)
-            elif source == "XY":
-                combo.addItems(self.xy_columns)
-                self._auto_select(combo, field, self.xy_columns)
-            elif source == "BOTH":
-                # For Reference Des, we need it to match BOTH, but usually we map it to BOM 
-                # and assume XY has same name, or ask for both. 
-                # For simplicity, let's map it to BOM here.
-                combo.addItems(self.bom_columns)
-                self._auto_select(combo, field, self.bom_columns)
+            choices = self.bom_columns if source == "BOM" else self.xy_columns
+            combo.addItems(choices)
 
-    def _auto_select(self, combo, target, choices):
-        """Helper to auto-select if 'Part Number' matches 'Part Number'"""
-        target_clean = target.lower().replace(" ", "")
-        for i, choice in enumerate(choices):
-            choice_clean = str(choice).lower().replace(" ", "").replace("_", "")
-            # Fuzzy match keywords
-            if target_clean in choice_clean or choice_clean in target_clean:
-                combo.setCurrentIndex(i + 1) # +1 because of "-- Select --"
+            # Smart Select
+            saved_col = saved_config.get(field)
+            if saved_col and saved_col in choices:
+                index = combo.findText(saved_col)
+                if index >= 0:
+                    combo.setCurrentIndex(index)
+                    continue 
+            
+            self._auto_select(combo, field, choices)
+
+    def _auto_select(self, combo, target_field, choices):
+        target_clean = target_field.lower().replace(" ", "").replace("_", "")
+        # Aliases for auto-matching
+        if "refx" in target_clean: target_clean = "midx"
+        if "refy" in target_clean: target_clean = "midy"
+        
+        for index, choice in enumerate(choices):
+            choice_clean = choice.lower().replace(" ", "").replace("_", "")
+            if target_clean == choice_clean:
+                combo.setCurrentIndex(index + 1)
+                return
+            if len(target_clean) > 3 and target_clean in choice_clean:
+                combo.setCurrentIndex(index + 1)
                 return
 
     def finalize_mapping(self):
-        """Gather all user selections and send to Main."""
         final_map = {}
-        for field, (combo, source) in self.mapping_combos.items():
+        for field, (combo, _) in self.mapping_combos.items():
             selected = combo.currentText()
-            if selected == "-- Select Column --":
-                # Optional fields can be skipped, but required ones should warn.
-                # For now, we just pass None
-                final_map[field] = None
-            else:
-                final_map[field] = selected
+            final_map[field] = selected if selected != "-- Select Column --" else None
         
-        # Emit the map
+        if not final_map.get("BOM Reference Col") or not final_map.get("XY Reference Col"):
+            QMessageBox.warning(self, "Error", "Reference Columns must be mapped.")
+            return
+
+        save_mapping_config(final_map)
         self.next_clicked.emit(final_map)
