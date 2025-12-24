@@ -1,1 +1,1 @@
-{"BOM Reference Col": "Location", "XY Reference Col": "Designator", "Layer / Side": "Layer", "Mid X": "Center-X(mm)", "Mid Y": "Center-Y(mm)", "Rotation": "Rotation", "Part Number": "Part no", "Value": "Value", "Description": "Description", "Manufacturer": "Manufacturer", "Qty": "Qty", "Footprint": null}
+{"BOM Reference Col": "Designator", "XY Reference Col": "Designator", "Layer": "Layer", "Ref X": "Ref X", "Ref Y": "Ref Y", "Rotation": "Rotation", "Part number": "Part number", "VALUE": "VALUE", "Footprint": "Footprint", "Quantity": "Quantity", "Remark": "Remark"}
