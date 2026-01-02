@@ -3,27 +3,19 @@ from src.core.normalizer import normalize_bom_data
 import re
 
 def perform_merge_v2(bom_df, xy_df, mapping):
-    print("\n!!! EXECUTING V2.1 LOGIC ENGINE (SMART FOOTPRINT) !!!")
+    print("\n!!! EXECUTING V3 LOGIC (BOM SEGREGATION - SLIM INPUTS) !!!")
     
     # --- 1. KEY RETRIEVAL ---
-    bom_ref_col = mapping.get("BOM Reference Col")
-    xy_ref_col = mapping.get("XY Reference Col")
+    bom_ref_col = mapping.get("BOM Location Col")
+    xy_ref_col = mapping.get("XY Location Col")
     
     if not bom_ref_col or not xy_ref_col:
-         raise ValueError("Mapping Error: Reference Columns missing.")
+         raise ValueError("Mapping Error: Location Columns missing.")
 
-    # Get Column Names
-    ref_x_col = mapping.get("Ref X") or mapping.get("Mid X")
-    ref_y_col = mapping.get("Ref Y") or mapping.get("Mid Y")
-    rot_col = mapping.get("Rotation")
-    
-    # Detect if we can grab footprint from XY as a backup
-    # (We assume the column name is 'Footprint' in XY if not explicitly mapped)
-    xy_footprint_col = None
-    for col in xy_df.columns:
-        if "footprint" in col.lower():
-            xy_footprint_col = col
-            break
+    # Get Column Names (Using new user definitions)
+    ref_x_col = mapping.get("Center-X")
+    ref_y_col = mapping.get("Center-Y")
+    rot_col   = mapping.get("Rotation")
 
     # --- 2. CLEAN UNITS FROM XY DATA ---
     if ref_x_col and ref_x_col in xy_df.columns:
@@ -54,32 +46,21 @@ def perform_merge_v2(bom_df, xy_df, mapping):
         merge_status = row['_merge']
         status = "MATCHED" if merge_status == 'both' else ("XY_ONLY" if merge_status == 'left_only' else "BOM_ONLY")
         
-        # --- SMART FOOTPRINT FETCH ---
-        # 1. Try BOM Mapping
-        footprint = row.get(mapping.get("Footprint"), "")
-        
-        # 2. If BOM is empty, try XY Mapping or Auto-Detected XY Column
-        if pd.isna(footprint) or str(footprint).strip() == "":
-            # Try to get it from the XY side of the merge
-            if xy_footprint_col and xy_footprint_col in row:
-                footprint = row[xy_footprint_col]
-            # Or check if it was suffixed during merge
-            elif xy_footprint_col and f"{xy_footprint_col}_XY" in row:
-                 footprint = row[f"{xy_footprint_col}_XY"]
-
         new_row = {
-            "Ref Des": row['_JOIN_KEY'],
-            "Status": status,
-            "Is Ignored": False,
-            "Layer": row.get(mapping.get("Layer") or mapping.get("Layer / Side"), ""),
-            "Ref X": row.get(ref_x_col, ""),
-            "Ref Y": row.get(ref_y_col, ""),
-            "Rotation": row.get(rot_col, ""),
-            "Part number": row.get(mapping.get("Part number") or mapping.get("Part Number"), ""),
-            "VALUE": row.get(mapping.get("VALUE") or mapping.get("Value"), ""),
-            "Footprint": str(footprint).strip(), # Uses the smart fallback result
-            "Quantity": row.get(mapping.get("Quantity") or mapping.get("Qty"), ""),
-            "Remark": str(row.get(mapping.get("Remark"), "")).strip()
+            "Ref Des":     row['_JOIN_KEY'],
+            "Status":      status,
+            "Is Ignored":  False,
+            
+            # Mapped Fields
+            "Layer":       row.get(mapping.get("Layer"), ""),
+            "Ref X":       row.get(ref_x_col, ""),
+            "Ref Y":       row.get(ref_y_col, ""),
+            "Rotation":    row.get(rot_col, ""),
+            
+            # New BOM Fields
+            "Part Number": row.get(mapping.get("Part No."), ""),
+            "Description": row.get(mapping.get("Description"), ""), # New Field
+            "Quantity":    row.get(mapping.get("Quantity"), "")
         }
         
         # Auto-Ignore

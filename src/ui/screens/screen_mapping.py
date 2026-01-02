@@ -2,13 +2,6 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
                              QLabel, QComboBox, QPushButton, QGroupBox, QMessageBox)
 from PyQt5.QtCore import pyqtSignal
 
-# Safely import config manager
-try:
-    from src.core.config_manager import load_mapping_config, save_mapping_config
-except ImportError:
-    def load_mapping_config(): return {}
-    def save_mapping_config(data): pass
-
 class MappingScreen(QWidget):
     next_clicked = pyqtSignal(dict)
     back_clicked = pyqtSignal()
@@ -23,6 +16,7 @@ class MappingScreen(QWidget):
     def init_ui(self):
         layout = QVBoxLayout()
         
+        # --- INSTRUCTION BOX ---
         instruction_box = QGroupBox("Step 2: Map Columns")
         inst_layout = QVBoxLayout()
         inst_label = QLabel("Map the file columns to your new requirements.")
@@ -35,24 +29,22 @@ class MappingScreen(QWidget):
         grid_layout = QGridLayout()
         grid_layout.setSpacing(10)
         
-        # --- NEW FIELD REQUIREMENTS ---
+        # --- NEW FIELD REQUIREMENTS (Exact Match to User Request) ---
         self.required_fields = [
-            # --- LINKING KEYS ---
-            ("BOM Reference Col", "BOM"), 
-            ("XY Reference Col", "XY"),   
+            # --- LINKING KEYS (Crucial) ---
+            ("BOM Location Col", "BOM"), # Was "Designator"
+            ("XY Location Col",  "XY"),  # Was "Designator"
             
             # --- XY DATA ---
-            ("Layer", "XY"),       # Was "Layer / Side"
-            ("Ref X", "XY"),       # Was "Mid X"
-            ("Ref Y", "XY"),       # Was "Mid Y"
+            ("Center-X", "XY"),       # Was Ref X
+            ("Center-Y", "XY"),       # Was Ref Y
+            ("Layer",    "XY"),
             ("Rotation", "XY"),
             
             # --- BOM DATA ---
-            ("Part number", "BOM"),
-            ("VALUE", "BOM"),
-            ("Footprint", "BOM"),
-            ("Quantity", "BOM"),
-            ("Remark", "BOM")      # New Field
+            ("Part No.",    "BOM"),   # Was Part Number
+            ("Description", "BOM"),   # Replaces Value/Remark
+            ("Quantity",    "BOM")
         ]
 
         # Headers
@@ -66,7 +58,7 @@ class MappingScreen(QWidget):
             
             # Label
             lbl_field = QLabel(field)
-            if "Reference" in field: lbl_field.setStyleSheet("font-weight: bold;")
+            if "Location" in field: lbl_field.setStyleSheet("font-weight: bold;")
             
             # Badge
             lbl_source = QLabel(source)
@@ -105,36 +97,28 @@ class MappingScreen(QWidget):
     def populate_dropdowns(self, bom_cols, xy_cols):
         self.bom_columns = bom_cols
         self.xy_columns = xy_cols
-        saved_config = load_mapping_config()
 
         for field, (combo, source) in self.mapping_combos.items():
             combo.clear()
             combo.addItem("-- Select Column --")
             choices = self.bom_columns if source == "BOM" else self.xy_columns
             combo.addItems(choices)
-
-            # Smart Select
-            saved_col = saved_config.get(field)
-            if saved_col and saved_col in choices:
-                index = combo.findText(saved_col)
-                if index >= 0:
-                    combo.setCurrentIndex(index)
-                    continue 
             
             self._auto_select(combo, field, choices)
 
     def _auto_select(self, combo, target_field, choices):
-        target_clean = target_field.lower().replace(" ", "").replace("_", "")
-        # Aliases for auto-matching
-        if "refx" in target_clean: target_clean = "midx"
-        if "refy" in target_clean: target_clean = "midy"
-        
+        # Clean target for easier matching
+        t_clean = target_field.lower().replace("-", "").replace(".", "").replace(" ", "")
+        if "location" in t_clean: t_clean = "designator" # Alias
+
         for index, choice in enumerate(choices):
-            choice_clean = choice.lower().replace(" ", "").replace("_", "")
-            if target_clean == choice_clean:
+            c_clean = choice.lower().replace("-", "").replace(".", "").replace(" ", "")
+            
+            # Exact or close match
+            if t_clean == c_clean:
                 combo.setCurrentIndex(index + 1)
                 return
-            if len(target_clean) > 3 and target_clean in choice_clean:
+            if t_clean in c_clean:
                 combo.setCurrentIndex(index + 1)
                 return
 
@@ -144,9 +128,9 @@ class MappingScreen(QWidget):
             selected = combo.currentText()
             final_map[field] = selected if selected != "-- Select Column --" else None
         
-        if not final_map.get("BOM Reference Col") or not final_map.get("XY Reference Col"):
-            QMessageBox.warning(self, "Error", "Reference Columns must be mapped.")
+        # Validation
+        if not final_map.get("BOM Location Col") or not final_map.get("XY Location Col"):
+            QMessageBox.warning(self, "Error", "Location Columns must be mapped.")
             return
 
-        save_mapping_config(final_map)
         self.next_clicked.emit(final_map)
