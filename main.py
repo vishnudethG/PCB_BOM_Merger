@@ -1,20 +1,26 @@
-# main.py
 import sys
+import ctypes  # <--- NEW: Required for Windows Taskbar Icon
 from PyQt5.QtWidgets import QApplication
 from src.ui.main_window import MainWindow
 
+# Import the theme manager
+from src.ui.styles import apply_modern_theme
+
 def main():
-    # 1. Create the Application
+    # --- [NEW] WINDOWS TASKBAR ICON FIX ---
+    # This tells Windows: "I am a standalone app, not just Python"
+    if sys.platform == 'win32':
+        myappid = 'pcb.bom.segregator.v2' # Unique string
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    # --------------------------------------
+
     app = QApplication(sys.argv)
     
-    # 2. Apply a Style (Optional, makes it look standard)
-    app.setStyle("Fusion")
-
-    # 3. Create and Show the Main Window
+    apply_modern_theme(app)
+    
     window = MainWindow()
-    window.show()
-
-    # 4. Run the Event Loop
+    window.showMaximized() 
+    
     sys.exit(app.exec_())
 
 if __name__ == "__main__":

@@ -1,4 +1,0 @@
-pandas
-openpyxl
-xlsxwriter
-PyQt5

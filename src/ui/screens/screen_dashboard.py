@@ -1,160 +1,314 @@
-# src/ui/screens/screen_dashboard.py
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
-                             QTableWidgetItem, QLabel, QPushButton, QTabWidget, 
-                             QHeaderView, QMessageBox, QCheckBox, QFrame)
+                             QTableWidgetItem, QLabel, QPushButton, QHeaderView, 
+                             QTabWidget, QAbstractItemView, QMessageBox)
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QFont, QColor
+import pandas as pd
 
 class DashboardScreen(QWidget):
     back_clicked = pyqtSignal()
-    export_clicked = pyqtSignal(object) # Passes the final DataFrame
+    export_clicked = pyqtSignal(object) 
 
     def __init__(self):
         super().__init__()
-        self.master_df = None
+        self.full_df = pd.DataFrame()
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+
+        # --- HEADER ---
+        header_layout = QHBoxLayout()
+        title_lbl = QLabel("Production Dashboard")
+        title_lbl.setStyleSheet("font-size: 20px; font-weight: bold; color: #2c3e50;")
         
-        # --- TOP SUMMARY BAR ---
-        summary_layout = QHBoxLayout()
-        self.lbl_matched = self._create_stat_box("Matched", "0", "#D4EDDA", "#155724") # Green
-        self.lbl_xy_err = self._create_stat_box("XY Errors (Critical)", "0", "#F8D7DA", "#721C24") # Red
-        self.lbl_bom_warn = self._create_stat_box("BOM Warnings", "0", "#FFF3CD", "#856404") # Yellow
+        self.lbl_subtitle = QLabel("Preview of final output. 'Exceptions' can be edited.")
+        self.lbl_subtitle.setStyleSheet("color: #7f8c8d; font-style: italic;")
         
-        summary_layout.addWidget(self.lbl_matched)
-        summary_layout.addWidget(self.lbl_xy_err)
-        summary_layout.addWidget(self.lbl_bom_warn)
-        layout.addLayout(summary_layout)
+        header_layout.addWidget(title_lbl)
+        header_layout.addStretch()
+        header_layout.addWidget(self.lbl_subtitle)
+        layout.addLayout(header_layout)
 
         # --- TABS ---
         self.tabs = QTabWidget()
-        
-        # Tab 1: XY Errors (Critical)
-        self.tab_xy = QWidget()
-        self.table_xy = self._create_table(["Ref Des", "Layer", "X", "Y", "Action"])
-        xy_layout = QVBoxLayout(self.tab_xy)
-        xy_layout.addWidget(self.table_xy)
-        self.tabs.addTab(self.tab_xy, "XY Errors (Missing Parts)")
-        
-        # Tab 2: BOM Warnings
-        self.tab_bom = QWidget()
-        self.table_bom = self._create_table(["Ref Des", "Part Number", "Description", "Action"])
-        bom_layout = QVBoxLayout(self.tab_bom)
-        bom_layout.addWidget(self.table_bom)
-        self.tabs.addTab(self.tab_bom, "BOM Only (No Location)")
+        self.tabs.setStyleSheet("""
+            QTabWidget::pane { border: 1px solid #bdc3c7; top: -1px; }
+            QTabBar::tab {
+                background: #ecf0f1;
+                border: 1px solid #bdc3c7;
+                padding: 8px 15px;
+                margin-right: 2px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+                font-weight: bold;
+                color: #7f8c8d;
+            }
+            QTabBar::tab:selected {
+                background: #BDD7EE; 
+                border-bottom-color: #BDD7EE;
+                color: #2c3e50;
+            }
+        """)
 
-        # Tab 3: Matched
-        self.tab_match = QWidget()
-        self.table_match = self._create_table(["Ref Des", "Layer", "X", "Y", "Part Number", "Rotation"])
-        match_layout = QVBoxLayout(self.tab_match)
-        match_layout.addWidget(self.table_match)
-        self.tabs.addTab(self.tab_match, "Matched Data")
+        # Define Tabs
+        self.tables = {}
+        tab_defs = [
+            ("Internal BOM", "Internal BOM (Grouped)"),
+            ("XY Data", "Master XY Data"),
+            ("BOM Top", "Top Assembly (Grouped)"),
+            ("BOM Bottom", "Bottom Assembly (Grouped)"),
+            ("XY Top", "Top XY (Placement)"),
+            ("XY Bottom", "Bottom XY (Placement)"),
+            ("Exceptions", "Exceptions Report")
+        ]
+
+        for key, title in tab_defs:
+            tab = QWidget()
+            t_layout = QVBoxLayout(tab)
+            t_layout.setContentsMargins(5,5,5,5)
+            
+            # Create Table (Exceptions is Editable)
+            is_editable = (key == "Exceptions")
+            table = self._create_table(editable=is_editable)
+            
+            if is_editable:
+                table.itemChanged.connect(self.handle_exception_edit)
+            
+            self.tables[key] = table
+            t_layout.addWidget(table)
+            self.tabs.addTab(tab, title)
 
         layout.addWidget(self.tabs)
 
-        # --- BOTTOM BAR ---
-        nav_layout = QHBoxLayout()
-        btn_back = QPushButton("<< Back")
+        # --- FOOTER ---
+        footer = QHBoxLayout()
+        
+        btn_back = QPushButton("<< Adjust Mapping")
+        btn_back.setFixedWidth(150)
         btn_back.clicked.connect(self.back_clicked.emit)
         
-        self.btn_export = QPushButton("GENERATE EXCEL >>")
-        self.btn_export.setStyleSheet("font-weight: bold; padding: 10px;")
-        self.btn_export.clicked.connect(self.on_export)
+        self.btn_refresh = QPushButton("Reprocess Changes")
+        self.btn_refresh.setFixedWidth(160)
+        self.btn_refresh.setCursor(Qt.PointingHandCursor)
+        self.btn_refresh.setStyleSheet("color: #d35400; border: 1px solid #d35400;")
+        self.btn_refresh.clicked.connect(self.reprocess_data)
         
-        nav_layout.addWidget(btn_back)
-        nav_layout.addStretch()
-        nav_layout.addWidget(self.btn_export)
+        btn_export = QPushButton("Export to Excel >>")
+        btn_export.setFixedWidth(200)
+        btn_export.setProperty("class", "primary")
+        btn_export.clicked.connect(self.finalize_export)
         
-        layout.addLayout(nav_layout)
+        footer.addWidget(btn_back)
+        footer.addStretch()
+        footer.addWidget(self.btn_refresh)
+        footer.addStretch()
+        footer.addWidget(btn_export)
+        
+        layout.addLayout(footer)
         self.setLayout(layout)
 
-    def _create_stat_box(self, title, count, bg_color, text_color):
-        lbl = QLabel(f"{title}: {count}")
-        lbl.setStyleSheet(f"background-color: {bg_color}; color: {text_color}; border: 1px solid {text_color}; padding: 10px; font-weight: bold; border-radius: 4px;")
-        lbl.setAlignment(Qt.AlignCenter)
-        return lbl
-
-    def _create_table(self, columns):
+    def _create_table(self, editable=False):
         table = QTableWidget()
-        table.setColumnCount(len(columns))
-        table.setHorizontalHeaderLabels(columns)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table.setAlternatingRowColors(True)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SingleSelection)
+        
+        font = QFont()
+        font.setPointSize(10)
+        table.setFont(font)
+        
+        header = table.horizontalHeader()
+        header.setStyleSheet("""
+            QHeaderView::section {
+                background-color: #BDD7EE;
+                color: black;
+                font-weight: bold;
+                border: 1px solid #bdc3c7;
+                padding: 4px;
+                height: 35px;
+            }
+        """)
+        header.setStretchLastSection(True)
+
+        if not editable:
+            table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        else:
+            table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
+            
         return table
 
     def set_data(self, df):
-        """Called by Main Window to load data."""
-        self.master_df = df
+        self.full_df = df.copy()
+        
+        if "_id" not in self.full_df.columns:
+            self.full_df["_id"] = range(len(self.full_df))
+
+        # Ensure Remarks column exists for editing
+        if "Remarks" not in self.full_df.columns:
+            self.full_df["Remarks"] = ""
+            
+        # Classify Layers
+        if 'Layer' in self.full_df.columns:
+            self.full_df['Layer_Classified'] = self.full_df['Layer'].apply(self._classify_layer)
+        else:
+            self.full_df['Layer_Classified'] = "Unknown"
+
         self.refresh_views()
+
+    def _classify_layer(self, val):
+        s = str(val).strip().lower()
+        if s in ['b', 'bottom', 'bot', 'bottomlayer', 'bottom layer', 'back', 'solder']: return 'Bottom'
+        if s in ['t', 'top', 'toplayer', 'top layer', 'front', 'component']: return 'Top'
+        return 'Unknown'
+
+    def _group_bom_data(self, df):
+        if df.empty: return df
+        
+        fill_cols = ['Part Number', 'Description']
+        for c in fill_cols:
+            if c in df.columns: df[c] = df[c].fillna('')
+
+        valid_group_cols = [c for c in fill_cols if c in df.columns]
+        if not valid_group_cols: return df
+
+        agg_rules = {}
+        if 'Location' in df.columns: agg_rules['Location'] = lambda x: ', '.join(sorted(x.astype(str)))
+        elif 'Ref Des' in df.columns: agg_rules['Ref Des'] = lambda x: ', '.join(sorted(x.astype(str)))
+        else: agg_rules['Designator'] = lambda x: ', '.join(sorted(x.astype(str)))
+
+        if 'BOM_Order' in df.columns: agg_rules['BOM_Order'] = 'min'
+
+        grouped = df.groupby(valid_group_cols).agg(agg_rules).reset_index()
+        
+        for potential in ['Ref Des', 'Designator']:
+            if potential in grouped.columns:
+                grouped.rename(columns={potential: 'Location'}, inplace=True)
+
+        if 'Location' in grouped.columns:
+            grouped['Quantity'] = grouped['Location'].apply(lambda x: len(str(x).split(',')))
+        
+        return grouped
 
     def refresh_views(self):
-        """Filters master_df and repopulates tables."""
-        if self.master_df is None: return
+        df = self.full_df
+        df_top_all = df[df['Layer_Classified'] == 'Top'].copy()
+        df_bot_all = df[df['Layer_Classified'] == 'Bottom'].copy()
 
-        # Buckets
-        matched = self.master_df[self.master_df["Status"] == "MATCHED"]
-        xy_err = self.master_df[(self.master_df["Status"] == "XY_ONLY") & (self.master_df["Is Ignored"] == False)]
-        bom_warn = self.master_df[self.master_df["Status"] == "BOM_ONLY"]
+        # 1. Internal BOM
+        df_internal = df[df['Status'] != 'XY_ONLY'].copy()
+        df_int_grp = self._group_bom_data(df_internal)
+        self._fill_table("Internal BOM", df_int_grp, ['Part Number', 'Description', 'Location', 'Quantity'])
+
+        # 2. XY Data
+        df_xy = df[df['Status'] != 'BOM_ONLY'].copy()
+        disp_xy = df_xy.rename(columns={'Ref Des': 'Location', 'Ref X': 'X', 'Ref Y': 'Y'})
+        self._fill_table("XY Data", disp_xy, ['X', 'Y', 'Location', 'Rotation', 'Layer'])
+
+        # 3. BOM Top
+        df_btop = df_top_all[df_top_all['Status'] != 'XY_ONLY'].copy()
+        df_btop_grp = self._group_bom_data(df_btop)
+        df_btop_grp['Layer'] = "TopLayer"
+        self._fill_table("BOM Top", df_btop_grp, ['Sl No.', 'Part Number', 'Description', 'Location', 'Quantity', 'Layer'], add_sl=True)
+
+        # 4. BOM Bottom
+        df_bbot = df_bot_all[df_bot_all['Status'] != 'XY_ONLY'].copy()
+        df_bbot_grp = self._group_bom_data(df_bbot)
+        df_bbot_grp['Layer'] = "BottomLayer"
+        self._fill_table("BOM Bottom", df_bbot_grp, ['Sl No.', 'Part Number', 'Description', 'Location', 'Quantity', 'Layer'], add_sl=True)
+
+        # 5. XY Top
+        df_xyt = df_top_all[df_top_all['Status'] != 'BOM_ONLY'].copy()
+        df_xyt['Layer'] = "TopLayer"
+        disp_xyt = df_xyt.rename(columns={'Ref Des': 'Location', 'Ref X': 'X', 'Ref Y': 'Y'})
+        self._fill_table("XY Top", disp_xyt, ['Sl No.', 'Part Number', 'Location', 'X', 'Y', 'Rotation', 'Description', 'Layer'], add_sl=True)
+
+        # 6. XY Bottom
+        df_xyb = df_bot_all[df_bot_all['Status'] != 'BOM_ONLY'].copy()
+        df_xyb['Layer'] = "BottomLayer"
+        disp_xyb = df_xyb.rename(columns={'Ref Des': 'Location', 'Ref X': 'X', 'Ref Y': 'Y'})
+        self._fill_table("XY Bottom", disp_xyb, ['Sl No.', 'Part Number', 'Location', 'X', 'Y', 'Rotation', 'Description', 'Layer'], add_sl=True)
+
+        # 7. Exceptions (Added Remarks)
+        mask_error = (df['Status'] != 'MATCHED') & (df['Is Ignored'] == False)
+        df_errors = df[mask_error].copy()
+        df_errors['Issue Type'] = "Unknown Error"
+        df_errors.loc[df_errors['Status'] == 'XY_ONLY', 'Issue Type'] = 'On Board, Not in BOM'
+        df_errors.loc[df_errors['Status'] == 'BOM_ONLY', 'Issue Type'] = 'In BOM, Not on Board'
         
-        # Update Stats
-        self.lbl_matched.setText(f"Matched: {len(matched)}")
-        self.lbl_xy_err.setText(f"XY Errors: {len(xy_err)}")
-        self.lbl_bom_warn.setText(f"BOM Warnings: {len(bom_warn)}")
+        if 'Ref Des' in df_errors.columns:
+            df_errors.rename(columns={'Ref Des': 'Location'}, inplace=True)
 
-        # Update Export Button Logic
-        if len(xy_err) > 0:
-            self.btn_export.setEnabled(False)
-            self.btn_export.setText(f"Fix {len(xy_err)} Critical Errors to Export")
-        else:
-            self.btn_export.setEnabled(True)
-            self.btn_export.setText("GENERATE EXCEL >>")
+        # Added 'Remarks' to the end of the list
+        self._fill_table("Exceptions", df_errors, ['Location', 'Issue Type', 'Part Number', 'Layer', 'Description', 'Remarks'])
 
-        # Populate Tables
-        self._populate_xy_table(xy_err)
-        self._populate_bom_table(bom_warn)
-        self._populate_match_table(matched)
-
-    def _populate_xy_table(self, df):
-        self.table_xy.setRowCount(len(df))
-        for r, (idx, row) in enumerate(df.iterrows()):
-            self.table_xy.setItem(r, 0, QTableWidgetItem(str(row["Ref Des"])))
-            self.table_xy.setItem(r, 1, QTableWidgetItem(str(row["Layer"])))
-            self.table_xy.setItem(r, 2, QTableWidgetItem(str(row["Mid X"])))
-            self.table_xy.setItem(r, 3, QTableWidgetItem(str(row["Mid Y"])))
+    def _fill_table(self, key, df, columns, add_sl=False):
+        table = self.tables[key]
+        table.blockSignals(True)
+        table.clear()
+        
+        if add_sl and not df.empty:
+            df = df.copy()
+            df.reset_index(drop=True, inplace=True)
+            df['Sl No.'] = df.index + 1
+        
+        for c in columns:
+            if c not in df.columns: df[c] = ""
             
-            # Action Button (Ignore)
-            btn_ignore = QPushButton("Ignore / DNI")
-            btn_ignore.clicked.connect(lambda _, x=idx: self.mark_ignore(x))
-            self.table_xy.setCellWidget(r, 4, btn_ignore)
+        table.setColumnCount(len(columns))
+        table.setRowCount(len(df))
+        table.setHorizontalHeaderLabels(columns)
 
-    def _populate_bom_table(self, df):
-        self.table_bom.setRowCount(len(df))
-        for r, (idx, row) in enumerate(df.iterrows()):
-            self.table_bom.setItem(r, 0, QTableWidgetItem(str(row["Ref Des"])))
-            self.table_bom.setItem(r, 1, QTableWidgetItem(str(row["Part Number"])))
-            self.table_bom.setItem(r, 2, QTableWidgetItem(str(row["Description"])))
-            
-            # Action Button (Placeholder)
-            self.table_bom.setItem(r, 3, QTableWidgetItem("Wait for v1.1"))
+        if key == "Exceptions":
+            self.exc_row_map = {}
 
-    def _populate_match_table(self, df):
-        self.table_match.setRowCount(len(df))
-        # Limit matched view for performance if needed
-        limit_df = df.head(100) 
-        self.table_match.setRowCount(len(limit_df))
-        for r, (idx, row) in enumerate(limit_df.iterrows()):
-            self.table_match.setItem(r, 0, QTableWidgetItem(str(row["Ref Des"])))
-            self.table_match.setItem(r, 1, QTableWidgetItem(str(row["Layer"])))
-            self.table_match.setItem(r, 2, QTableWidgetItem(str(row["Mid X"])))
-            self.table_match.setItem(r, 3, QTableWidgetItem(str(row["Mid Y"])))
-            self.table_match.setItem(r, 4, QTableWidgetItem(str(row["Part Number"])))
-            self.table_match.setItem(r, 5, QTableWidgetItem(str(row["Rotation"])))
+        for r_idx, (df_idx, row) in enumerate(df.iterrows()):
+            if key == "Exceptions":
+                self.exc_row_map[r_idx] = row["_id"]
 
-    def mark_ignore(self, index):
-        """Update DataFrame to ignore this item."""
-        self.master_df.at[index, "Is Ignored"] = True
+            for c_idx, col in enumerate(columns):
+                val = str(row[col]) if pd.notna(row[col]) else ""
+                item = QTableWidgetItem(val)
+                table.setItem(r_idx, c_idx, item)
+        
+        table.resizeColumnsToContents()
+        table.blockSignals(False)
+
+    def handle_exception_edit(self, item):
+        row = item.row()
+        col = item.column()
+        
+        if row not in self.exc_row_map: return
+        record_id = self.exc_row_map[row]
+        
+        table = self.tables["Exceptions"]
+        col_name = table.horizontalHeaderItem(col).text()
+        
+        # Mapping Display Header -> Logic Engine Column
+        if col_name == "Location": df_col = "Ref Des"
+        else: df_col = col_name
+
+        new_val = item.text()
+        
+        if df_col not in self.full_df.columns and col_name == "Location":
+             if "Ref Des" in self.full_df.columns: df_col = "Ref Des"
+             elif "Designator" in self.full_df.columns: df_col = "Designator"
+
+        idx = self.full_df.index[self.full_df["_id"] == record_id].tolist()
+        if idx:
+            # Check if column exists, if not create it (e.g. Remarks)
+            if df_col not in self.full_df.columns:
+                self.full_df[df_col] = ""
+            self.full_df.at[idx[0], df_col] = new_val
+
+    def reprocess_data(self):
+        if 'Layer' in self.full_df.columns:
+            self.full_df['Layer_Classified'] = self.full_df['Layer'].apply(self._classify_layer)
         self.refresh_views()
+        QMessageBox.information(self, "Refreshed", "Dashboard updated based on edits.")
 
-    def on_export(self):
-        self.export_clicked.emit(self.master_df)
+    def finalize_export(self):
+        export_df = self.full_df.drop(columns=["_id", "Layer_Classified"], errors="ignore")
+        self.export_clicked.emit(export_df)
